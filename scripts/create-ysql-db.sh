@@ -27,23 +27,20 @@ if ! docker ps --format '{{.Names}}' | grep -q '^yb-node-1$'; then
   exit 1
 fi
 
-# Use a DO block with format('%I') to safely quote identifier; pass target via a session GUC.
-read -r -d '' YSQL_DO <<'SQL'
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_database WHERE datname = current_setting('app.target_db', true)
-  ) THEN
-    EXECUTE format('CREATE DATABASE %I', current_setting('app.target_db', true));
-  END IF;
-END
-$$;
-SQL
-
-docker compose exec -T yb-node-1 bash -lc \
+# Query existence first (machine-friendly), then conditionally create with safe identifier quoting.
+# Escape single quotes for literal comparison
+ESC_DB=$(printf %s "$DB_NAME" | sed "s/'/''/g")
+EXISTS=$(docker compose exec -T yb-node-1 bash -lc \
   "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname yugabyte \
-    --set ON_ERROR_STOP=1 \
-    --set app.target_db='${DB_NAME}' \
-    --command \"$YSQL_DO\""
+    -At --set ON_ERROR_STOP=1 \
+    --command \"SELECT 1 FROM pg_database WHERE datname = '$ESC_DB';\"" | tr -d '\r')
+
+if [[ -z "$EXISTS" ]]; then
+  SAFE_DB=${DB_NAME//\"/\"\"}
+  docker compose exec -T yb-node-1 bash -lc \
+    "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname yugabyte \
+      --set ON_ERROR_STOP=1 \
+      --command \"CREATE DATABASE \"\"$SAFE_DB\"\";\""
+fi
 
 echo "[YSQL] Database '$DB_NAME' ensured (created if missing)."

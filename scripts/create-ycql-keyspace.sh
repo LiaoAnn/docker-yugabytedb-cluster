@@ -37,6 +37,6 @@ fi
 CQL="CREATE KEYSPACE IF NOT EXISTS \"$KS_NAME\" WITH REPLICATION = { 'class': 'SimpleStrategy', 'replication_factor': $RF };"
 
 docker compose exec -T yb-node-1 bash -lc \
-  "/home/yugabyte/bin/ycqlsh -e \"$CQL\""
+  "/home/yugabyte/bin/ycqlsh \$(hostname) 9042 -e \"$CQL\""
 
 echo "[YCQL] Keyspace '$KS_NAME' ensured with RF=$RF (created if missing)."

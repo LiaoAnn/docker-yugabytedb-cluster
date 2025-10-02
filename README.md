@@ -86,9 +86,9 @@ bash scripts/create-ycql-keyspace.sh appks 3
 docker-compose exec yb-node-1 bash -lc \
   "/home/yugabyte/bin/ysqlsh --host $(hostname) --username yugabyte --dbname yugabyte --set ON_ERROR_STOP=1 --command \"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'appdb') THEN EXECUTE 'CREATE DATABASE appdb'; END IF; END $$;\""
 
-# YCQL（RF=3）
-docker-compose exec yb-node-1 bash -lc \
-  "/home/yugabyte/bin/ycqlsh -e \"CREATE KEYSPACE IF NOT EXISTS appks WITH REPLICATION = { 'class': 'SimpleStrategy', 'replication_factor': 3 };\""
+ # YCQL（RF=3）
+ docker-compose exec yb-node-1 bash -lc \
+   "/home/yugabyte/bin/ycqlsh \$(hostname) 9042 -e \"CREATE KEYSPACE IF NOT EXISTS appks WITH REPLICATION = { 'class': 'SimpleStrategy', 'replication_factor': 3 };\""
 ```
 
 Scale or restart a node:
