@@ -1,90 +1,88 @@
 # Docker YugabyteDB Cluster
 
-[中文說明 (Traditional Chinese)](./README.zh-TW.md)
+一個開發者友善的本機 3 節點 YugabyteDB 叢集（使用 `yugabyted` 與 Docker Compose）。
 
-A developer-friendly local 3-node YugabyteDB cluster using `yugabyted` and Docker Compose.
-
-References:
+參考文件：
 - https://docs.yugabyte.com/preview/quick-start/docker/
 
-## Topology & Ports
-- Nodes: `yb-node-1`, `yb-node-2`, `yb-node-3`
-- Replication factor: RF=3 by default (can be tuned with `yugabyted configure`)
-- Data persisted to named Docker volumes
-- Static container hostnames for stable joins
-- Only node-1 exposes ports to the host
-- node-2/3 wait for `yb-node-1:15433` before joining to avoid races
+## 拓撲與連線埠
+- 節點：`yb-node-1`、`yb-node-2`、`yb-node-3`
+- 預設複本數：RF=3（可用 `yugabyted configure` 調整）
+- 資料持久化至命名 Docker volumes
+- 固定容器主機名，方便穩定加入叢集
+- 僅 node-1 對外映射連線埠
+- node-2/3 在加入前會等待 `yb-node-1:15433` 就緒以避免競態
 
-Host-exposed ports:
-- 7000: YB-Master UI (node-1)
-- 9000: YB-TServer UI (node-1)
-- 15433: YugabyteDB/YSQL UI (node-1)
-- 5433: YSQL (PostgreSQL-compatible)
-- 9042: YCQL
+主機映射連線埠：
+- 7000：YB-Master UI（node-1）
+- 9000：YB-TServer UI（node-1）
+- 15433：YugabyteDB/YSQL UI（node-1）
+- 5433：YSQL（PostgreSQL 相容）
+- 9042：YCQL
 
-## Quick start
+## 快速開始
 
-Start the cluster (from repo root):
+在 repo 根目錄啟動叢集：
 
 ```bash
 docker compose up -d
-# If your environment still uses v1: docker-compose up -d
+# 若你的環境仍使用 v1 指令：docker-compose up -d
 ```
 
-First boot can take a few tens of seconds.
+首次啟動可能需要數十秒。
 
-List containers:
+列出容器：
 
 ```bash
 docker ps --filter name=yb-node
 ```
 
-Check cluster status (inside node-1):
+查看叢集狀態（於 node-1 內）：
 
 ```bash
 docker compose exec yb-node-1 bash -lc 'bin/yugabyted status --base_dir=/home/yugabyte/yb_data'
 ```
 
-Open UIs:
+開啟 UI：
 - YSQL/YugabyteDB UI: http://localhost:15433
 - Master UI: http://localhost:7000
 - TServer UI: http://localhost:9000
 
-## Create YSQL database and YCQL keyspace (recommended scripts)
+## 建立 YSQL 資料庫與 YCQL keyspace（推薦使用腳本）
 
 ```bash
-# YSQL: create database (idempotent)
+# YSQL：建立資料庫（冪等）
 bash scripts/create-ysql-db.sh appdb
 
-# YCQL: create keyspace (idempotent, default RF=3)
+# YCQL：建立 keyspace（冪等，預設 RF=3）
 bash scripts/create-ycql-keyspace.sh appks 3
 ```
 
-Or, using clients inside the container directly:
+或於容器內直接使用客戶端建立：
 
 ```bash
-# YSQL create appdb (only if missing)
+# YSQL 建立 appdb（若不存在才建立）
 docker compose exec yb-node-1 bash -lc \
   "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname yugabyte --set ON_ERROR_STOP=1 --command \"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'appdb') THEN EXECUTE 'CREATE DATABASE appdb'; END IF; END $$;\""
 
-# YCQL create appks (RF=3)
+# YCQL 建立 appks（RF=3）
 docker compose exec yb-node-1 bash -lc \
   "/home/yugabyte/bin/ycqlsh \$(hostname) 9042 -e \"CREATE KEYSPACE IF NOT EXISTS appks WITH REPLICATION = { 'class': 'SimpleStrategy', 'replication_factor': 3 };\""
 ```
 
-## Application connections (important)
+## 應用程式連線（重要）
 
-Use the database name/keyspace name to connect. Do NOT use the Namespace Id (that is an internal cluster identifier).
+請使用「資料庫名稱 / keyspace 名稱」進行連線；不要使用 Namespace Id（它是叢集內部識別）。
 
-Common connection parameters:
-- Host: `localhost`
-- YSQL: port `5433` (database name e.g., `appdb`)
-- YCQL: port `9042` (keyspace e.g., `appks`)
-- Default credentials (unless changed): user `yugabyte`, password `yugabyte`
+通用連線參數：
+- Host：`localhost`
+- YSQL：port `5433`（資料庫名稱如 `appdb`）
+- YCQL：port `9042`（keyspace 如 `appks`）
+- 預設帳密（除非你更改過）：user `yugabyte`、password `yugabyte`
 
-### YSQL examples
+### YSQL 範例
 
-Python (psycopg2)
+Python（psycopg2）
 
 ```python
 import psycopg2
@@ -94,7 +92,7 @@ conn = psycopg2.connect(
     port=5433,
     dbname="appdb",
     user="yugabyte",
-    password="yugabyte"  # Remove if auth is not enforced
+    password="yugabyte"  # 若未強制啟用密碼，可移除
 )
 cur = conn.cursor()
 
@@ -111,7 +109,7 @@ cur.close()
 conn.close()
 ```
 
-Node.js (pg)
+Node.js（pg）
 
 ```javascript
 // ysql.js
@@ -122,7 +120,7 @@ const client = new Client({
   port: 5433,
   database: 'appdb',
   user: 'yugabyte',
-  password: 'yugabyte'   // Remove if auth is not enforced
+  password: 'yugabyte'   // 若未強制啟用密碼，可移除
 });
 
 await client.connect();
@@ -137,16 +135,16 @@ console.log(rows);
 await client.end();
 ```
 
-### YCQL examples
+### YCQL 範例
 
-Python (cassandra-driver)
+Python（cassandra-driver）
 
 ```python
 from cassandra.cluster import Cluster
 from cassandra.auth import PlainTextAuthProvider
 from uuid import uuid4
 
-auth = PlainTextAuthProvider("yugabyte", "yugabyte")  # Omit if auth is not enforced
+auth = PlainTextAuthProvider("yugabyte", "yugabyte")  # 若未強制啟用密碼，可省略
 cluster = Cluster(contact_points=["localhost"], port=9042, auth_provider=auth)
 session = cluster.connect()
 
@@ -166,19 +164,19 @@ for r in rows:
 cluster.shutdown()
 ```
 
-Node.js (cassandra-driver)
+Node.js（cassandra-driver）
 
 ```javascript
 // ycql.js
 import cassandra from 'cassandra-driver';
 
-// Determine localDataCenter first via CLI below (system.local)
+// 請先用下方 CLI 查詢 system.local 決定 localDataCenter
 const client = new cassandra.Client({
   contactPoints: ['localhost'],
-  localDataCenter: 'local', // Replace with your actual DC name
+  localDataCenter: 'local', // 請改成實際的 DC 名稱
   protocolOptions: { port: 9042 },
   keyspace: 'appks',
-  authProvider: new cassandra.auth.PlainTextAuthProvider('yugabyte', 'yugabyte') // Omit if auth is not enforced
+  authProvider: new cassandra.auth.PlainTextAuthProvider('yugabyte', 'yugabyte') // 若未強制啟用密碼，可移除
 });
 
 await client.connect();
@@ -199,72 +197,72 @@ console.log(rs.rows);
 await client.shutdown();
 ```
 
-## CLI verification (no need to install psql)
+## CLI 驗證（不需在主機安裝 psql）
 
-The container already includes `ysqlsh`/`ycqlsh`, so you can test without installing clients on the host.
+容器已內建 `ysqlsh`/`ycqlsh`，即使主機沒有安裝 psql 也能測試。
 
-YSQL (inside container):
+YSQL（容器內）：
 
 ```bash
 docker compose exec yb-node-1 bash -lc "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname appdb -c '\dt'"
 ```
 
-YCQL (inside container):
+YCQL（容器內）：
 
 ```bash
-# Determine data center (for YCQL driver localDataCenter)
+# 查詢 data center（供 YCQL 驅動設定 localDataCenter）
 docker compose exec yb-node-1 bash -lc "/home/yugabyte/bin/ycqlsh \$(hostname) 9042 -e \"SELECT data_center, rack FROM system.local;\""
 
-# List tables
+# 列出表
 docker compose exec yb-node-1 bash -lc "/home/yugabyte/bin/ycqlsh \$(hostname) 9042 -e \"DESCRIBE KEYSPACE appks;\""
 ```
 
-If you have psql installed on the host:
+若主機已安裝 psql，也可以：
 
 ```bash
 PGPASSWORD=yugabyte psql "host=localhost port=5433 dbname=appdb user=yugabyte" -c "\\dt"
 ```
 
-## Operations
+## 管理操作
 
-Restart/scale:
+重新啟動/縮放：
 
 ```bash
-# Restart node-2
+# 重新啟動 node-2
 docker compose restart yb-node-2
 
-# (Dangerous) Recreate node-3 data
+#（危險）重建 node-3 的資料
 docker compose down yb-node-3
 docker volume rm yugabytedb_yb-node-3-data || true
 ```
 
-Stop cluster (keep data):
+停止叢集（保留資料）：
 
 ```bash
 docker compose down
 ```
 
-Stop cluster and remove data:
+停止叢集並刪除資料：
 
 ```bash
 docker compose down -v
 ```
 
-## Troubleshooting
+## 疑難排解
 
-- node-2/3: "Node at the join ip provided is not reachable"
-  - node-1 was not ready yet. The compose includes a wait-on-port for 15433. If your env is slower, increase the wait loop (count/sleep) for node-2/3 in `docker-compose.yml`.
-  - You can also rerun: `docker compose restart yb-node-2 yb-node-3`.
+- node-2/3：出現「Node at the join ip provided is not reachable」
+  - 表示 node-1 尚未就緒。compose 已包含等待 15433 的機制；若環境較慢可調整 `docker-compose.yml` 內 node-2/3 的等待次數或間隔。
+  - 也可重試：`docker compose restart yb-node-2 yb-node-3`。
 
-- macOS Monterey port 7000 conflict (AirPlay)
-  - Change the mapping to `7001:7000` for node-1.
+- macOS Monterey 與 7000 埠衝突（AirPlay）
+  - 將對應改為 `7001:7000`。
 
-- Enforce/adjust YSQL auth
-  - You can reset password via `ALTER ROLE yugabyte WITH PASSWORD '...'`.
-  - Or tune tserver flags (e.g., `ysql_hba_conf_csv`) to enforce auth; update compose and restart.
+- 強制啟用/調整 YSQL 驗證
+  - 可透過 `ALTER ROLE yugabyte WITH PASSWORD '...'` 重設密碼。
+  - 或調整 tserver flags（例如 `ysql_hba_conf_csv`）以強制驗證；更新 compose 後重啟。
 
-## Notes
-- High `nofile` ulimit is configured as recommended.
-- Healthcheck waits for `yugabyted` to report Running.
-- For production/multi-host deployments, use official guides instead of Docker Compose.
-- In Compose v3, `depends_on` does not wait for health; we use an inline wait in node-2/3 commands to avoid races.
+## 備註
+- 本 compose 已設定較高的 `nofile` ulimit。
+- healthcheck 會等待 `yugabyted` 回報 Running。
+- 生產或多主機部署請參考官方部署指南，不建議用 Docker Compose。
+- Compose v3 的 `depends_on` 不會等待健康狀態，因此 node-2/3 的 command 內加入了等待以避免競態。
