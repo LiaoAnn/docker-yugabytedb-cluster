@@ -52,22 +52,22 @@ docker compose exec yb-node-1 bash -lc 'bin/yugabyted status --base_dir=/home/yu
 
 ```bash
 # YSQL：建立資料庫（冪等）
-bash scripts/create-ysql-db.sh appdb
+bash scripts/create-ysql-db.sh mydb
 
 # YCQL：建立 keyspace（冪等，預設 RF=3）
-bash scripts/create-ycql-keyspace.sh appks 3
+bash scripts/create-ycql-keyspace.sh mykeyspace 3
 ```
 
 或於容器內直接使用客戶端建立：
 
 ```bash
-# YSQL 建立 appdb（若不存在才建立）
+# YSQL 建立 mydb（若不存在才建立）
 docker compose exec yb-node-1 bash -lc \
-  "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname yugabyte --set ON_ERROR_STOP=1 --command \"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'appdb') THEN EXECUTE 'CREATE DATABASE appdb'; END IF; END $$;\""
+  "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname yugabyte --set ON_ERROR_STOP=1 --command \"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'mydb') THEN EXECUTE 'CREATE DATABASE mydb'; END IF; END $$;\""
 
-# YCQL 建立 appks（RF=3）
+# YCQL 建立 mykeyspace（RF=3）
 docker compose exec yb-node-1 bash -lc \
-  "/home/yugabyte/bin/ycqlsh \$(hostname) 9042 -e \"CREATE KEYSPACE IF NOT EXISTS appks WITH REPLICATION = { 'class': 'SimpleStrategy', 'replication_factor': 3 };\""
+  "/home/yugabyte/bin/ycqlsh \$(hostname) 9042 -e \"CREATE KEYSPACE IF NOT EXISTS mykeyspace WITH REPLICATION = { 'class': 'SimpleStrategy', 'replication_factor': 3 };\""
 ```
 
 ## 應用程式連線（重要）
@@ -76,8 +76,8 @@ docker compose exec yb-node-1 bash -lc \
 
 通用連線參數：
 - Host：`localhost`
-- YSQL：port `5433`（資料庫名稱如 `appdb`）
-- YCQL：port `9042`（keyspace 如 `appks`）
+- YSQL：port `5433`（資料庫名稱如 `mydb`）
+- YCQL：port `9042`（keyspace 如 `mykeyspace`）
 - 預設帳密（除非你更改過）：user `yugabyte`、password `yugabyte`
 
 ### YSQL 範例
@@ -90,7 +90,7 @@ import psycopg2
 conn = psycopg2.connect(
     host="localhost",
     port=5433,
-    dbname="appdb",
+    dbname="mydb",
     user="yugabyte",
     password="yugabyte"  # 若未強制啟用密碼，可移除
 )
@@ -118,7 +118,7 @@ import { Client } from 'pg';
 const client = new Client({
   host: 'localhost',
   port: 5433,
-  database: 'appdb',
+  database: 'mydb',
   user: 'yugabyte',
   password: 'yugabyte'   // 若未強制啟用密碼，可移除
 });
@@ -149,11 +149,11 @@ cluster = Cluster(contact_points=["localhost"], port=9042, auth_provider=auth)
 session = cluster.connect()
 
 session.execute("""
-CREATE KEYSPACE IF NOT EXISTS appks
+CREATE KEYSPACE IF NOT EXISTS mykeyspace
 WITH REPLICATION = { 'class': 'SimpleStrategy', 'replication_factor': 3 }
 """)
 
-session.set_keyspace("appks")
+session.set_keyspace("mykeyspace")
 session.execute("CREATE TABLE IF NOT EXISTS todos (id uuid PRIMARY KEY, title text)")
 session.execute("INSERT INTO todos (id, title) VALUES (%s, %s)", (uuid4(), "hello from ycql"))
 
@@ -175,7 +175,7 @@ const client = new cassandra.Client({
   contactPoints: ['localhost'],
   localDataCenter: 'local', // 請改成實際的 DC 名稱
   protocolOptions: { port: 9042 },
-  keyspace: 'appks',
+  keyspace: 'mykeyspace',
   authProvider: new cassandra.auth.PlainTextAuthProvider('yugabyte', 'yugabyte') // 若未強制啟用密碼，可移除
 });
 
@@ -196,6 +196,31 @@ console.log(rs.rows);
 
 await client.shutdown();
 ```
+
+## 修改或重設 YSQL 密碼
+
+重設預設超級使用者（yugabyte）的密碼：
+
+```bash
+docker compose exec yb-node-1 bash -lc \
+  "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname yugabyte -c \"ALTER ROLE yugabyte WITH PASSWORD 'newpassword';\""
+```
+
+建立應用程式使用者並授權（最佳實務，選擇性）：
+
+```bash
+# 建立 app 使用者（若已存在會報錯，可忽略或先檢查）
+docker compose exec yb-node-1 bash -lc \
+  "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname yugabyte -c \"CREATE ROLE appuser WITH LOGIN PASSWORD 'appsecret';\""
+
+# 對你的應用程式資料庫授權（若資料庫不同，請更換 appdb）
+docker compose exec yb-node-1 bash -lc \
+  "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname appdb -c \"GRANT CONNECT ON DATABASE appdb TO appuser; GRANT USAGE ON SCHEMA public TO appuser; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO appuser;\""
+```
+
+注意：
+- 若目前未強制啟用驗證，密碼可能不會被真正檢查。你可以透過 tserver 參數（如 `ysql_hba_conf_csv`）來強制驗證，並重啟叢集。
+- 若想讓建立角色具備冪等性，可改用 DO 區塊先檢查存在性再建立。
 
 ## CLI 驗證（不需在主機安裝 psql）
 

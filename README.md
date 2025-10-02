@@ -54,22 +54,22 @@ Open UIs:
 
 ```bash
 # YSQL: create database (idempotent)
-bash scripts/create-ysql-db.sh appdb
+bash scripts/create-ysql-db.sh mydb
 
 # YCQL: create keyspace (idempotent, default RF=3)
-bash scripts/create-ycql-keyspace.sh appks 3
+bash scripts/create-ycql-keyspace.sh mykeyspace 3
 ```
 
 Or, using clients inside the container directly:
 
 ```bash
-# YSQL create appdb (only if missing)
+# YSQL create mydb (only if missing)
 docker compose exec yb-node-1 bash -lc \
-  "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname yugabyte --set ON_ERROR_STOP=1 --command \"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'appdb') THEN EXECUTE 'CREATE DATABASE appdb'; END IF; END $$;\""
+  "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname yugabyte --set ON_ERROR_STOP=1 --command \"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'mydb') THEN EXECUTE 'CREATE DATABASE mydb'; END IF; END $$;\""
 
-# YCQL create appks (RF=3)
+# YCQL create mykeyspace (RF=3)
 docker compose exec yb-node-1 bash -lc \
-  "/home/yugabyte/bin/ycqlsh \$(hostname) 9042 -e \"CREATE KEYSPACE IF NOT EXISTS appks WITH REPLICATION = { 'class': 'SimpleStrategy', 'replication_factor': 3 };\""
+  "/home/yugabyte/bin/ycqlsh \$(hostname) 9042 -e \"CREATE KEYSPACE IF NOT EXISTS mykeyspace WITH REPLICATION = { 'class': 'SimpleStrategy', 'replication_factor': 3 };\""
 ```
 
 ## Application connections (important)
@@ -78,8 +78,8 @@ Use the database name/keyspace name to connect. Do NOT use the Namespace Id (tha
 
 Common connection parameters:
 - Host: `localhost`
-- YSQL: port `5433` (database name e.g., `appdb`)
-- YCQL: port `9042` (keyspace e.g., `appks`)
+- YSQL: port `5433` (database name e.g., `mydb`)
+- YCQL: port `9042` (keyspace e.g., `mykeyspace`)
 - Default credentials (unless changed): user `yugabyte`, password `yugabyte`
 
 ### YSQL examples
@@ -92,7 +92,7 @@ import psycopg2
 conn = psycopg2.connect(
     host="localhost",
     port=5433,
-    dbname="appdb",
+    dbname="mydb",
     user="yugabyte",
     password="yugabyte"  # Remove if auth is not enforced
 )
@@ -120,7 +120,7 @@ import { Client } from 'pg';
 const client = new Client({
   host: 'localhost',
   port: 5433,
-  database: 'appdb',
+  database: 'mydb',
   user: 'yugabyte',
   password: 'yugabyte'   // Remove if auth is not enforced
 });
@@ -151,11 +151,11 @@ cluster = Cluster(contact_points=["localhost"], port=9042, auth_provider=auth)
 session = cluster.connect()
 
 session.execute("""
-CREATE KEYSPACE IF NOT EXISTS appks
+CREATE KEYSPACE IF NOT EXISTS mykeyspace
 WITH REPLICATION = { 'class': 'SimpleStrategy', 'replication_factor': 3 }
 """)
 
-session.set_keyspace("appks")
+session.set_keyspace("mykeyspace")
 session.execute("CREATE TABLE IF NOT EXISTS todos (id uuid PRIMARY KEY, title text)")
 session.execute("INSERT INTO todos (id, title) VALUES (%s, %s)", (uuid4(), "hello from ycql"))
 
@@ -177,7 +177,7 @@ const client = new cassandra.Client({
   contactPoints: ['localhost'],
   localDataCenter: 'local', // Replace with your actual DC name
   protocolOptions: { port: 9042 },
-  keyspace: 'appks',
+  keyspace: 'mykeyspace',
   authProvider: new cassandra.auth.PlainTextAuthProvider('yugabyte', 'yugabyte') // Omit if auth is not enforced
 });
 
@@ -199,6 +199,31 @@ console.log(rs.rows);
 await client.shutdown();
 ```
 
+## Change or reset YSQL password
+
+Reset the default superuser password (yugabyte):
+
+```bash
+docker compose exec yb-node-1 bash -lc \
+  "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname yugabyte -c \"ALTER ROLE yugabyte WITH PASSWORD 'newpassword';\""
+```
+
+Create an application user and grant basic privileges (optional best practice):
+
+```bash
+# Create an app user (will error if it already exists; ignore the error or check first)
+docker compose exec yb-node-1 bash -lc \
+  "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname yugabyte -c \"CREATE ROLE app_user WITH LOGIN PASSWORD 'my_secret';\""
+
+# Grant privileges on your app database (replace mydb if different)
+docker compose exec yb-node-1 bash -lc \
+  "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname mydb -c \"GRANT CONNECT ON DATABASE mydb TO app_user; GRANT USAGE ON SCHEMA public TO app_user; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;\""
+```
+
+Notes:
+- If authentication is not enforced, passwords may be ignored. To enforce auth, configure tserver flags such as `ysql_hba_conf_csv` and restart the cluster.
+- For idempotent role creation, consider using a DO block to check existence before creating the role.
+
 ## CLI verification (no need to install psql)
 
 The container already includes `ysqlsh`/`ycqlsh`, so you can test without installing clients on the host.
@@ -206,7 +231,7 @@ The container already includes `ysqlsh`/`ycqlsh`, so you can test without instal
 YSQL (inside container):
 
 ```bash
-docker compose exec yb-node-1 bash -lc "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname appdb -c '\dt'"
+docker compose exec yb-node-1 bash -lc "/home/yugabyte/bin/ysqlsh --host \$(hostname) --username yugabyte --dbname mydb -c '\dt'"
 ```
 
 YCQL (inside container):
@@ -215,14 +240,14 @@ YCQL (inside container):
 # Determine data center (for YCQL driver localDataCenter)
 docker compose exec yb-node-1 bash -lc "/home/yugabyte/bin/ycqlsh \$(hostname) 9042 -e \"SELECT data_center, rack FROM system.local;\""
 
-# List tables
-docker compose exec yb-node-1 bash -lc "/home/yugabyte/bin/ycqlsh \$(hostname) 9042 -e \"DESCRIBE KEYSPACE appks;\""
+# Describe keyspace
+docker compose exec yb-node-1 bash -lc "/home/yugabyte/bin/ycqlsh \$(hostname) 9042 -e \"DESCRIBE KEYSPACE mykeyspace;\""
 ```
 
 If you have psql installed on the host:
 
 ```bash
-PGPASSWORD=yugabyte psql "host=localhost port=5433 dbname=appdb user=yugabyte" -c "\\dt"
+PGPASSWORD=yugabyte psql "host=localhost port=5433 dbname=mydb user=yugabyte" -c "\\dt"
 ```
 
 ## Operations
